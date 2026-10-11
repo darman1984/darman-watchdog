@@ -1,0 +1,52 @@
+# Azure DR 손잡이 — 사람이 GitHub 앱·웹에서 「Run workflow」로 실행(2026-10-11, HermesVM 퇴역으로 옮김).
+#   status   : DR VM 전원·studio DNS 가 어느 터널인지
+#   failover : DR VM 켜기 → 마지막 백업으로 띄우기 → studio DNS 를 DR 터널로 (PC 가 죽었을 때)
+#   drill    : 켜서 연습으로 띄우고(studio DNS 안 바꿈) studio-dr 주소 확인 → 끔
+# Azure 는 OIDC(비밀번호 없음) — 앱 「darman-watchdog-github」, 권한은 vm-studio-dr 하나에 VM Contributor.
+name: DR 전환
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "status | failover | drill"
+        required: true
+        default: status
+        type: choice
+        options: [status, failover, drill]
+permissions:
+  id-token: write
+  contents: read
+concurrency:
+  group: dr
+  cancel-in-progress: false
+jobs:
+  dr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: 실행
+        env:
+          ACTION: ${{ inputs.action }}
+          RG: ${{ secrets.DR_RG }}
+          VM: ${{ secrets.DR_VM }}
+        run: |
+          power() { az vm get-instance-view -g "$RG" -n "$VM" --query "instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus | [0]" -o tsv; }
+          run() { az vm run-command invoke -g "$RG" -n "$VM" --command-id RunShellScript --scripts "$1" --query "value[0].message" -o tsv | tail -25; }
+          echo "DR VM: $(power)"
+          case "$ACTION" in
+            status) ;;
+            failover)
+              az vm start -g "$RG" -n "$VM" -o none
+              run "bash /opt/studio-dr/bootstrap.sh failover 2>&1 | tail -25" ;;
+            drill)
+              az vm start -g "$RG" -n "$VM" -o none
+              run "bash /opt/studio-dr/bootstrap.sh drill 2>&1 | tail -25"
+              run "curl -s -o /dev/null -m 15 -w 'studio-dr %{http_code}' https://studio-dr.darman.co.kr/healthz"
+              az vm deallocate -g "$RG" -n "$VM" -o none; echo "DR VM 할당 해제" ;;
+          esac
+          echo "끝: DR VM $(power)"

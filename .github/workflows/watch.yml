@@ -1,0 +1,81 @@
+# 다르만 스튜디오(PC) 바깥 감시 — HermesVM studio_watchdog.py 를 옮긴 것(2026-10-11, VM 퇴역).
+# 15분마다 공개 주소를 공용 DNS 로 확인 → 실패하면 2분 간격으로 10분 더 → 그래도 안 되면 메일(6시간에 한 번까지),
+# 살아나면 「복구됨」 메일. 매번 스튜디오 운영 상태판에 「GitHub 감시」 보고. 비밀값은 저장소 Secrets 에만.
+name: watch
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: write   # 상태 파일(state/alert) 커밋 — 공개 저장소 예약 실행이 60일 무활동으로 꺼지지 않게 하는 효과도
+concurrency:
+  group: watch
+  cancel-in-progress: false
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: 확인
+        id: check
+        env:
+          STUDIO_URL: ${{ secrets.STUDIO_URL }}
+        run: |
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$STUDIO_URL/healthz" || true)
+            [ "$code" = 200 ] && { ok=1; break; }
+            echo "시도 $i: $code"; [ $i -lt 6 ] && sleep 120
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "결과: $([ $ok = 1 ] && echo 정상 || echo '응답 없음(약 10분)')"
+      - name: 알림·상태
+        env:
+          OK: ${{ steps.check.outputs.ok }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+          STUDIO_URL: ${{ secrets.STUDIO_URL }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import os, smtplib, time, pathlib
+          from email.mime.text import MIMEText
+          ok = os.environ["OK"] == "1"
+          st = pathlib.Path("state/alert"); st.parent.mkdir(exist_ok=True)
+          last = float(st.read_text().strip() or 0) if st.exists() else 0.0
+          dr = f"https://github.com/{os.environ['REPO']}/actions/workflows/dr.yml"
+          def mail(subject, body):
+              m = MIMEText(body, "plain", "utf-8"); m["Subject"] = subject; m["From"] = os.environ["GMAIL_USER"]; m["To"] = os.environ["ALERT_TO"]
+              with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
+                  s.login(os.environ["GMAIL_USER"], os.environ["GMAIL_APP_PASSWORD"]); s.send_message(m)
+          now = time.time()
+          if not ok and now - last > 6 * 3600:
+              mail("⚠ 다르만 스튜디오(PC) 응답 없음 — DR 전환할까요?",
+                   "다르만 스튜디오(studio.darman.co.kr)가 10분 넘게 응답하지 않습니다(PC 꺼짐·WSL·인터넷·터널).\n\n"
+                   f"Azure DR 로 전환하려면: GitHub 앱(또는 브라우저) → {dr} → 「Run workflow」 → action 에 failover → 실행.\n"
+                   "DR 이 켜지고 마지막 백업(DB 는 마지막 WAL 까지)으로 띄운 뒤 주소를 DR 로 돌립니다(10~15분, 켜져 있는 동안 시간당 약 73원).\n"
+                   "PC 가 돌아오면 PC 에서 scripts/dr-failback.sh 로 되돌립니다.\n\n기다리려면 아무것도 안 하면 됩니다(6시간 뒤 다시 알림).")
+              st.write_text(str(now)); print("알림 메일 보냄")
+          elif ok and last:
+              mail("✅ 다르만 스튜디오(PC) 다시 응답함", "다르만 스튜디오가 다시 응답합니다. DR 로 전환했다면 PC 에서 scripts/dr-failback.sh 로 되돌리세요.")
+              st.write_text(""); print("복구 메일 보냄")
+          PY
+      - name: 상태판에 보고
+        if: always()
+        env:
+          OK: ${{ steps.check.outputs.ok }}
+          STUDIO_URL: ${{ secrets.STUDIO_URL }}
+          TOKEN: ${{ secrets.STUDIO_AGENT_TOKEN }}
+        run: |
+          # 스튜디오가 죽어 있으면 이 보고도 실패 — 그건 정상(상태판도 같이 죽음)
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          curl -s -m 20 -X POST "$STUDIO_URL/api/v1/agent/monitor/report" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -H 'User-Agent: darman-watchdog' \
+            -d "{\"source\":\"github\",\"reporterEveryMin\":120,\"jobs\":[{\"name\":\"watch\",\"label\":\"PC 바깥 감시(15분)\",\"ok\":true,\"lastRunAt\":\"$now\",\"everyMin\":60,\"message\":\"$([ "$OK" = 1 ] && echo 스튜디오 정상 || echo 스튜디오 응답 없음)\"}]}" -o /dev/null -w "보고 %{http_code}\n" || true
+      - name: 상태 저장
+        if: always()
+        run: |
+          git config user.name "darman-watchdog"; git config user.email "actions@users.noreply.github.com"
+          date -u +%Y-%m-%d > state/last-run-day
+          git add state/ && (git diff --cached --quiet || (git commit -q -m "state $(date -u +%F)" && git push -q)) || true
