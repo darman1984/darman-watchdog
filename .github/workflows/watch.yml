@@ -81,7 +81,7 @@ jobs:
           # 스튜디오가 죽어 있으면 이 보고도 실패 — 그건 정상(상태판도 같이 죽음)
           now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           curl -s -m 20 -X POST "$STUDIO_URL/api/v1/agent/monitor/report" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -H 'User-Agent: darman-watchdog' \
-            -d "{\"source\":\"github\",\"reporterEveryMin\":120,\"jobs\":[{\"name\":\"watch\",\"label\":\"PC 바깥 감시(15분)\",\"ok\":true,\"lastRunAt\":\"$now\",\"everyMin\":60,\"message\":\"$([ "$OK" = 1 ] && echo 스튜디오 정상 || echo 스튜디오 응답 없음)\"}]}" -o /dev/null -w "보고 %{http_code}\n" || true
+            -d "{\"source\":\"github\",\"reporterEveryMin\":45,\"jobs\":[{\"name\":\"watch\",\"label\":\"PC 바깥 감시(15분)\",\"ok\":true,\"lastRunAt\":\"$now\",\"everyMin\":30,\"message\":\"$([ "$OK" = 1 ] && echo 스튜디오 정상 || echo 스튜디오 응답 없음)\"}]}" -o /dev/null -w "보고 %{http_code}\n" || true
       - name: 상태 저장
         if: always()
         run: |
