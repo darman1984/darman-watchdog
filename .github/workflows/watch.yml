@@ -5,7 +5,12 @@ name: watch
 on:
   schedule:
     - cron: "*/15 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test_mail:
+        description: "알림 메일 시험(실제 장애 아님)"
+        type: boolean
+        default: false
 permissions:
   contents: write   # 상태 파일(state/alert) 커밋 — 공개 저장소 예약 실행이 60일 무활동으로 꺼지지 않게 하는 효과도
 concurrency:
@@ -38,6 +43,7 @@ jobs:
           ALERT_TO: ${{ secrets.ALERT_TO }}
           STUDIO_URL: ${{ secrets.STUDIO_URL }}
           REPO: ${{ github.repository }}
+          TEST_MAIL: ${{ inputs.test_mail }}
         run: |
           python3 - <<'PY'
           import os, smtplib, time, pathlib
@@ -51,6 +57,9 @@ jobs:
               with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
                   s.login(os.environ["GMAIL_USER"], os.environ["GMAIL_APP_PASSWORD"]); s.send_message(m)
           now = time.time()
+          if os.environ.get("TEST_MAIL") == "true":
+              mail("[시험] 다르만 감시 알림 메일", f"GitHub 감시(darman-watchdog)의 알림 메일 시험입니다. 실제 장애가 나면 이런 메일이 오고, DR 전환은 {dr} 에서 실행합니다.")
+              print("시험 메일 보냄")
           if not ok and now - last > 6 * 3600:
               mail("⚠ 다르만 스튜디오(PC) 응답 없음 — DR 전환할까요?",
                    "다르만 스튜디오(studio.darman.co.kr)가 10분 넘게 응답하지 않습니다(PC 꺼짐·WSL·인터넷·터널).\n\n"
