@@ -1,0 +1,81 @@
+# 다르만 그룹웨어(work-studio.darman.co.kr) 바깥 감시 — 스튜디오 감시(watch)와 따로(2026-10-26, 그룹웨어는 독립 서비스).
+# 서버가 통째로 죽었을 때만 이 메일이 필요함 — 부분 장애(백업·메일 서버 등)는 그룹웨어가 스스로 관리자에게 알림·푸시.
+# watch 가 끝날 때마다 따라 돎(15분 — watch 는 Cloudflare Worker darman-cron 이 깨움, GitHub 예약 실행이 밀려서). schedule 은 예비.
+# 공개 점검 주소 /api/v1/ops/health: 200 정상 · 503 앱은 살아 있고 점검 실패(앱이 알림) · 그 밖(응답 없음 등) = 서버가 죽음.
+name: gw-watch
+on:
+  workflow_run:
+    workflows: [watch]
+    types: [completed]
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_mail:
+        description: "알림 메일 시험(실제 장애 아님)"
+        type: boolean
+        default: false
+permissions:
+  contents: write   # 상태 파일(state/gw-alert)
+concurrency:
+  group: gw-watch
+  cancel-in-progress: false
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GW_URL: https://work-studio.darman.co.kr
+    steps:
+      - uses: actions/checkout@v4
+      - name: 확인
+        id: check
+        run: |
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /tmp/h.json -m 20 -w '%{http_code}' "$GW_URL/api/v1/ops/health" || true)
+            # 503 = 앱은 살아 있음(실패는 앱이 관리자에게 알림) — 여기서는 서버가 죽은 것만 봄
+            { [ "$code" = 200 ] || [ "$code" = 503 ]; } && { ok=1; break; }
+            echo "시도 $i: $code"; [ $i -lt 6 ] && sleep 120
+          done
+          echo "ok=$ok" >> "$GITHUB_OUTPUT"
+          echo "결과: $([ $ok = 1 ] && echo "응답함 $code $(cat /tmp/h.json 2>/dev/null)" || echo '응답 없음(약 10분)')"
+      - name: 알림
+        env:
+          OK: ${{ steps.check.outputs.ok }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+          TEST_MAIL: ${{ inputs.test_mail }}
+        run: |
+          python3 - <<'PY'
+          import os, smtplib, time, pathlib
+          from email.mime.text import MIMEText
+          ok = os.environ["OK"] == "1"
+          st = pathlib.Path("state/gw-alert"); st.parent.mkdir(exist_ok=True)
+          last = float(st.read_text().strip() or 0) if st.exists() else 0.0
+          url = os.environ["GW_URL"]
+          def mail(subject, body):
+              m = MIMEText(body, "plain", "utf-8"); m["Subject"] = subject; m["From"] = os.environ["GMAIL_USER"]; m["To"] = os.environ["ALERT_TO"]
+              with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as s:
+                  s.login(os.environ["GMAIL_USER"], os.environ["GMAIL_APP_PASSWORD"]); s.send_message(m)
+          now = time.time()
+          if os.environ.get("TEST_MAIL") == "true":
+              mail("[시험] 다르만 그룹웨어 감시 알림 메일", f"GitHub 감시(gw-watch)의 알림 메일 시험입니다. {url} 가 10분 넘게 응답하지 않으면 이런 메일이 옵니다.")
+              print("시험 메일 보냄")
+          if not ok and now - last > 6 * 3600:
+              mail("⚠ 다르만 그룹웨어 응답 없음",
+                   f"다르만 그룹웨어({url})가 10분 넘게 응답하지 않습니다(PC 꺼짐·WSL·인터넷·터널·앱 컨테이너).\n\n"
+                   "PC 에서 확인: wsl -d Ubuntu-24.04 -e docker ps --filter name=darman-gw\n"
+                   "다시 띄우기: C:\\darman-groupware 에서 bash scripts/up.sh (WSL)\n\n"
+                   "기다리려면 아무것도 안 하면 됩니다(6시간 뒤 다시 알림, 살아나면 복구 메일).")
+              st.write_text(str(now)); print("알림 메일 보냄")
+          elif ok and last:
+              mail("✅ 다르만 그룹웨어 다시 응답함", f"다르만 그룹웨어({url})가 다시 응답합니다. 관리 콘솔 「운영 상태」에서 점검 결과를 확인하세요.")
+              st.write_text(""); print("복구 메일 보냄")
+          PY
+      - name: 상태 저장
+        if: always()
+        run: |
+          git config user.name "darman-watchdog"; git config user.email "actions@users.noreply.github.com"
+          git add state/gw-alert 2>/dev/null; (git diff --cached --quiet || (git commit -q -m "gw state $(date -u +%F)" && git pull -q --rebase && git push -q)) || true
