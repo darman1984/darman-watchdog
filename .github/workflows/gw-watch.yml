@@ -78,4 +78,5 @@ jobs:
         if: always()
         run: |
           git config user.name "darman-watchdog"; git config user.email "actions@users.noreply.github.com"
-          git add state/gw-alert 2>/dev/null; (git diff --cached --quiet || (git commit -q -m "gw state $(date -u +%F)" && git pull -q --rebase && git push -q)) || true
+          [ -f state/gw-alert ] || exit 0   # 알림을 한 번도 안 보냈으면 저장할 것 없음
+          git add state/gw-alert; (git diff --cached --quiet || (git commit -q -m "gw state $(date -u +%F)" && git pull -q --rebase && git push -q)) || true
