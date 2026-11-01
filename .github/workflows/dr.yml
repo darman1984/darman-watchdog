@@ -44,9 +44,12 @@ jobs:
               az vm start -g "$RG" -n "$VM" -o none
               run "bash /opt/studio-dr/bootstrap.sh failover 2>&1 | tail -25" ;;
             drill)
+              # 중간 단계가 실패해도(bash -e) VM 은 꼭 끈다 — 켜 둔 채 남으면 과금
+              trap 'az vm deallocate -g "$RG" -n "$VM" -o none; echo "DR VM 할당 해제(실패 뒤): $(power)"' ERR
               az vm start -g "$RG" -n "$VM" -o none
               run "bash /opt/studio-dr/bootstrap.sh drill 2>&1 | tail -25"
-              run "curl -s -o /dev/null -m 15 -w 'studio-dr %{http_code}' https://studio-dr.darman.co.kr/healthz"
+              # 바깥 주소(Cloudflare → DR 터널)로 판 번호까지 — 2분 반 동안 다시 시도. PC 의 dr-drill.sh 가 「studio-dr 200 version=X」 를 DR 안 판과 맞춰 봄
+              run 'for i in $(seq 1 30); do c=$(curl -s -o /tmp/m.json -m 10 -w "%{http_code}" https://studio-dr.darman.co.kr/api/v1/meta); [ "$c" = 200 ] && break; sleep 5; done; echo "studio-dr $c version=$(jq -r .version /tmp/m.json 2>/dev/null)"'
               az vm deallocate -g "$RG" -n "$VM" -o none; echo "DR VM 할당 해제" ;;
           esac
           echo "끝: DR VM $(power)"
