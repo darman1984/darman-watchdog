@@ -3,12 +3,14 @@
 # watch 가 끝날 때마다 따라 돎(15분 — watch 는 Cloudflare Worker darman-cron 이 깨움, GitHub 예약 실행이 밀려서). schedule 은 예비.
 # 공개 점검 주소 /api/v1/ops/health: 200 정상 · 503 앱은 살아 있고 점검 실패(앱이 알림) · 그 밖(응답 없음 등) = 서버가 죽음.
 name: gw-watch
+# 2026-11-14 그룹웨어 얼림(사용자 승인 — 업그레이드 기획안 9장 2번): 자동 실행을 멈춘다(꺼 둔 서버에 「응답 없음」 메일이 6시간마다 가지 않게).
+# 되살릴 때 아래 주석 다섯 줄을 풀어 되돌린다.
 on:
-  workflow_run:
-    workflows: [watch]
-    types: [completed]
-  schedule:
-    - cron: "7,37 * * * *"
+  # workflow_run:
+  #   workflows: [watch]
+  #   types: [completed]
+  # schedule:
+  #   - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       test_mail:
