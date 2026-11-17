@@ -58,17 +58,16 @@ jobs:
                   s.login(os.environ["GMAIL_USER"], os.environ["GMAIL_APP_PASSWORD"]); s.send_message(m)
           now = time.time()
           if os.environ.get("TEST_MAIL") == "true":
-              mail("[시험] 다르만 감시 알림 메일", f"GitHub 감시(darman-watchdog)의 알림 메일 시험입니다. 실제 장애가 나면 이런 메일이 오고, DR 전환은 {dr} 에서 실행합니다.")
+              mail("[시험] 다르만 감시 알림 메일", "GitHub 감시(darman-watchdog)의 알림 메일 시험입니다. 실제 장애가 나면 이런 메일이 옵니다.")
               print("시험 메일 보냄")
           if not ok and now - last > 6 * 3600:
-              mail("⚠ 다르만 스튜디오(PC) 응답 없음 — DR 전환할까요?",
-                   "다르만 스튜디오(studio.darman.co.kr)가 10분 넘게 응답하지 않습니다(PC 꺼짐·WSL·인터넷·터널).\n\n"
-                   f"Azure DR 로 전환하려면: GitHub 앱(또는 브라우저) → {dr} → 「Run workflow」 → action 에 failover → 실행.\n"
-                   "DR 이 켜지고 마지막 백업(DB 는 마지막 WAL 까지)으로 띄운 뒤 주소를 DR 로 돌립니다(10~15분, 켜져 있는 동안 시간당 약 73원).\n"
-                   "PC 가 돌아오면 PC 에서 scripts/dr-failback.sh 로 되돌립니다.\n\n기다리려면 아무것도 안 하면 됩니다(6시간 뒤 다시 알림).")
+              mail("⚠ 다르만 스튜디오(N100) 응답 없음",
+                   "다르만 스튜디오(studio.darman.co.kr)가 10분 넘게 응답하지 않습니다(N100 꺼짐·WSL 상자·인터넷·터널).\n\n"
+                   "N100 의 전원이 켜져 있는지부터 보세요(정전 뒤에는 전원 버튼). 켜져 있으면 Claude 에게 「N100 확인해」라고 하면 됩니다.\n"
+                   "(Azure 대기 서버(DR)는 11-17 에 접었습니다 — 되살리기는 Azure·K11 백업에서.)\n\n6시간 뒤 다시 알립니다.")
               st.write_text(str(now)); print("알림 메일 보냄")
           elif ok and last:
-              mail("✅ 다르만 스튜디오(PC) 다시 응답함", "다르만 스튜디오가 다시 응답합니다. DR 로 전환했다면 PC 에서 scripts/dr-failback.sh 로 되돌리세요.")
+              mail("✅ 다르만 스튜디오(N100) 다시 응답함", "다르만 스튜디오가 다시 응답합니다.")
               st.write_text(""); print("복구 메일 보냄")
           PY
       - name: 상태판에 보고
